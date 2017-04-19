@@ -19,11 +19,10 @@ RawLoanData <- read.csv("LoanStats3a_securev1.csv", skip = "1", sep = ",", heade
 dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
 RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
 
-RawLoanData$int_rate <- as.numeric(gsub("\\%", "", RawLoanData$int_rate))*.01
-RawLoanData$revol_util <- as.numeric(gsub("\\%", "", RawLoanData$revol_util))*.01
-
 
 #Fixing NA's in records with 0's
+RawLoanData$int_rate <- as.numeric(gsub("\\%", "", RawLoanData$int_rate))*.01
+RawLoanData$revol_util <- as.numeric(gsub("\\%", "", RawLoanData$revol_util))*.01
 RawLoanData$delinq_2yrs[is.na(RawLoanData$delinq_2yrs)] <- 0
 RawLoanData$inq_last_6mths[is.na(RawLoanData$inq_last_6mths)] <- 0
 RawLoanData$open_acc[is.na(RawLoanData$open_acc)] <- 0
@@ -33,7 +32,8 @@ RawLoanData$acc_now_delinq[is.na(RawLoanData$acc_now_delinq)] <- 0
 RawLoanData$mths_since_last_delinq[is.na(RawLoanData$mths_since_last_delinq)] <- 0
 RawLoanData$open_acc[is.na(RawLoanData$open_acc)] <- 0
 RawLoanData$mths_since_last_record[is.na(RawLoanData$mths_since_last_record)] <- 0
-
+RawLoanData$revol_util[is.na(RawLoanData$revol_util)] <- 0
+RawLoanData$pub_rec_bankruptcies[is.na(RawLoanData$pub_rec_bankruptcies)] <- 0
 
 ## Adding new features.  
 
@@ -124,21 +124,16 @@ RawLoanData$tax_liens <- NA
 #RawLoanData <- RawLoanData[-na_index2, ]
 
 
-## Cleaning up Loan Status
+## Cleaning up factored fieldss
 
-levels(RawLoanData$loan_status)
+#Fixing Factors
+RawLoanData$term <- droplevels(RawLoanData$term)
+RawLoanData$sub_grade <- droplevels(RawLoanData$sub_grade)
+RawLoanData$emp_length <- droplevels(RawLoanData$emp_length)
+RawLoanData$verification_status <- droplevels(RawLoanData$verification_status)
+RawLoanData$purpose <- droplevels(RawLoanData$purpose)
 
-# Removing current loans as they are out of analysis range. 
-RawLoanData$loan_status[which(RawLoanData$loan_status == "Current")] <- NA
-RawLoanData$loan_status[which(RawLoanData$loan_status == "")] <- NA
-RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (16-30 days)")] <- NA
-RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (31-120 days)")] <- NA
-RawLoanData$loan_status[which(RawLoanData$loan_status == "In Grace Period")] <- NA
-na_index3 <- which(is.na(RawLoanData$loan_status))
-RawLoanData <- RawLoanData[-na_index3, ]
-
-levels(RawLoanData$loan_status)
-
+#Fixing Home ownership fields
 levels(RawLoanData$home_ownership)
 RawLoanData$home_ownership[which(RawLoanData$home_ownership == "NONE")] <- NA
 RawLoanData$home_ownership[which(RawLoanData$home_ownership == "")] <- NA
@@ -149,12 +144,21 @@ RawLoanData <- RawLoanData[-na_index4, ]
 RawLoanData$home_ownership <- droplevels(RawLoanData$home_ownership)
 levels(RawLoanData$home_ownership)
 
-#Fixing Factors
-RawLoanData$term <- droplevels(RawLoanData$term)
-RawLoanData$sub_grade <- droplevels(RawLoanData$sub_grade)
-RawLoanData$emp_length <- droplevels(RawLoanData$emp_length)
-RawLoanData$verification_status <- droplevels(RawLoanData$verification_status)
-RawLoanData$purpose <- droplevels(RawLoanData$purpose)
+
+# Removing current loans as they are out of analysis range. 
+
+levels(RawLoanData$loan_status)
+
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Current")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (16-30 days)")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (31-120 days)")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "In Grace Period")] <- NA
+na_index3 <- which(is.na(RawLoanData$loan_status))
+RawLoanData <- RawLoanData[-na_index3, ]
+
+levels(RawLoanData$loan_status)
+
 
 # Consolidating defaulted loans.  0 will signify paid back loan.  1 will equal default. 
 
@@ -166,6 +170,9 @@ RawLoanData$loan_status <- as.factor(gsub("Default", "1", RawLoanData$loan_statu
 
 levels(RawLoanData$loan_status)
 
+
+
+#Dopping final empty variable columns
 dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
 RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
 
@@ -237,17 +244,20 @@ log_model_cloglog <- glm(loan_status ~   term + installment + sub_grade + emp_le
 summary(log_model_cloglog)
 predictions_cloglog <- predict(log_model_cloglog, newdata = test_set, type = "response")
 ROC_cloglog <- roc(test_set$loan_status, predictions_cloglog)
-plot(ROC_probit)
-auc(ROC_probit)
-
-## corrplot
+plot(ROC_cloglog)
+auc(ROC_cloglog)
 
 
+plot(ROC_all)
+lines(ROC_probit, col = "blue")
+lines(ROC_cloglog, col = "red")
+lines(ROC_Logit, col = "green")
 
 
 
-# Use a cut-off of 30% to make binary predictions-vectors
-cutoff <- 0.30
+
+# Use a cut-off of 20% to make binary predictions-vectors
+cutoff <- 0.2
 class_pred_all <- ifelse(predictions_all > cutoff, 1, 0)
 class_pred_logit <- ifelse(predictions_logit > cutoff, 1, 0)
 class_pred_probit <- ifelse(predictions_probit > cutoff, 1, 0)
@@ -277,42 +287,87 @@ tab_class_probit
 tab_class_cloglog
 
 
+
 ## Prediction Trees
 
-# Creating the first base classification tree. 
-tree1 <- rpart(loan_status ~ term + int_rate + installment + sub_grade + emp_length + home_ownership +  verification_status + purpose + dti + delinq_2yrs + fico_range_high + inq_last_6mths + mths_since_last_delinq + mths_since_last_record + open_acc + pub_rec + revol_bal + revol_util + total_acc + pub_rec_bankruptcies + dti_lc, method = "class", data =  training_set, control = rpart.control(cp = 0.001))
+# Creating the first base classification tree. FOR SOME REASON THIS ISNT WORKING!
+#tree1 <- rpart(loan_status ~ ., method = "class", data =  training_set, minsplit=2, minbucket=1, control = rpart.control(cp = 0.001))
+#tree1 <- rpart(loan_status ~ term + int_rate + installment + sub_grade + emp_length + home_ownership +  verification_status + purpose + dti + delinq_2yrs + fico_range_high + inq_last_6mths + mths_since_last_delinq + mths_since_last_record + open_acc + pub_rec + total_acc + pub_rec_bankruptcies + dti_lc, method = "class", data =  training_set, control = rpart.control(cp = 0.001))
+#tree1 <- rpart(loan_status ~ term + int_rate + installment + sub_grade + emp_length + home_ownership , method = "class", data =  training_set, control = rpart.control(cp = 0.001))
+
 
 # Plot the decision tree
-plot(tree1, uniform = TRUE)
-text(tree1)
+#plot(tree1)
+#text(tree1)
 
 #Changing Weights
-tree_prior <- rpart(loan_status ~ term + int_rate + installment + sub_grade + emp_length + home_ownership, method = "class",data = training_set, parms = list(prior=c(0.7, 0.3)), control = rpart.control(cp = 0.001))
-
-# Plot the decision tree
+tree_prior <- rpart(loan_status ~ ., method = "class",data = training_set, parms = list(prior=c(0.6, 0.4)), control = rpart.control(cp = 0.001))
 plot(tree_prior, uniform = TRUE)
 text(tree_prior)
 
+# Pruning the tree
+plotcp(tree_prior)
+printcp(tree_prior)
+cp_index1 <- which.min(tree_prior$cptable[, "xerror"])
+tree_min <- tree_prior$cptable[cp_index1, "CP"]
+ptree_prior <- prune(tree_prior, cp = tree_min)
+plot(ptree_prior)
+text(ptree_prior)
+
+pred_prior <- predict(ptree_prior, newdata = test_set, type = "class")
+confmat_prior <- table(test_set$loan_status, pred_prior)
+acc_prior <- sum(diag(confmat_prior)) / nrow(test_set)
+confmat_prior
+acc_prior
+
+ROC_ptree_prior<- roc(test_set$loan_status, as.numeric(pred_prior))
+plot(ROC_ptree_prior)
+auc(ROC_ptree_prior)
+
+
+
 # Loss Matrix Tree
-tree_loss_matrix <- rpart(loan_status ~ ., method = "class", data =  training_set, parms = list(loss = matrix(c(0, 10, 1, 0), ncol=2)), control = rpart.control(cp = 0.001))
+tree_loss_matrix <- rpart(loan_status ~ ., method = "class", data =  training_set, parms = list(loss = matrix(c(0, 7.5, 1, 0), ncol=2)), control = rpart.control(cp = 0.001))
 plot(tree_loss_matrix, uniform = TRUE)
 text(tree_loss_matrix)
 
-plotcp(tree1)
-printcp(tree1)
+# Pruning the tree
+plotcp(tree_loss_matrix)
+printcp(tree_loss_matrix)
+cp_index2 <- which.min(tree_loss_matrix$cptable[, "xerror"])
+tree_min2 <- tree_loss_matrix$cptable[cp_index2, "CP"]
+ptree_loss_matrix <- prune(tree_loss_matrix, cp = tree_min2)
+plot(ptree_loss_matrix)
+text(ptree_loss_matrix)
+
+pred_loss_matrix <- predict(ptree_loss_matrix, newdata = test_set,  type = "class")
+confmat_ptree_loss_matrix <- table(test_set$loan_status, pred_loss_matrix)
+acc_ptree_loss_matrix <- sum(diag(confmat_ptree_loss_matrix)) / nrow(test_set)
+confmat_ptree_loss_matrix
+acc_ptree_loss_matrix
+
+ROC_ptree_loss_matrix<- roc(test_set$loan_status, as.numeric(pred_loss_matrix))
+plot(ROC_ptree_loss_matrix)
+auc(ROC_ptree_loss_matrix)
+
 
 
 ## Random Forests
 
-fit_all <- randomForest(as.factor(loan_status) ~ .,
-                    data=training_set, 
-                    importance=TRUE, 
-                    ntree=2000)
+forest_all <- randomForest(as.factor(loan_status) ~ ., data = training_set, importance=TRUE, ntree=5000, mtry = 5)
+varImpPlot(forest_all)
+predictions_forest_all <- predict(forest_all, newdata = test_set, type = "class")
+confmat_forest_all <- table(test_set$loan_status, predictions_forest_all)
+acc_forest_all <- sum(diag(confmat_forest_all)) / nrow(test_set)
+acc_forest_all
 
-fit <- randomForest(as.factor(loan_status) ~ term + sub_grade + annual_inc + purpose + dti + pub_rec,
-                    data=training_set, 
-                    importance=TRUE, 
-                    ntree=2000)
+
+ROC_forest_all <- roc(test_set$loan_status, predictions_forest_all)
+plot(ROC_forest_all)
+auc(ROC__forest_all)
+
+
+
 
 
 
