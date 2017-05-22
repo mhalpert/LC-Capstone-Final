@@ -15,7 +15,7 @@ RawLoanData <- read.csv("LoanStats3a_securev1.csv", skip = "1", sep = ",", heade
 
 ## Removing extra fields and NA errors
 
-#Removing columns that are mostly NA's
+#Removing columns that are mostly NA's.  Lending club has too many columns that are mostly empty.  They are more useful in later loan vintages.
 dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
 RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
 
@@ -40,36 +40,10 @@ RawLoanData$pub_rec_bankruptcies[is.na(RawLoanData$pub_rec_bankruptcies)] <- 0
 # Percentage of monthly pay used to pay loan
 RawLoanData$dti <- RawLoanData$dti * 0.01
 RawLoanData$dti_lc <- RawLoanData$installment / (RawLoanData$annual_inc/12)
-RawLoanData$loan_amnt <- NA
-RawLoanData$annual_inc <- NA
+#RawLoanData$loan_amnt <- NA
+#RawLoanData$annual_inc <- NA
 
-# Over 75th percentile for open & active accounts
-#RawLoanData$too_many_accts <-  as.numeric(RawLoanData$open_acc > 12)
-#RawLoanData$open_acc <- NA
 
-# Over 75th percentile for credit inquiries in last 6 months
-#RawLoanData$had_heavy_inq <-  as.numeric(RawLoanData$inq_last_6mths >= 2)
-#RawLoanData$inq_last_6mths <- NA
-
-# Had a delinquincy in the last 2 years
-#RawLoanData$had_delinq <- as.numeric(RawLoanData$delinq_2yrs >= 1)
-#RawLoanData$delinq_2yrs <- NA
-
-# Had a public record
-#RawLoanData$had_pub_rec <- as.numeric(RawLoanData$pub_rec >= 1)
-#RawLoanData$pub_rec <- NA
-
-#Had a bankruptcy
-#RawLoanData$had_pub_rec_bankruptcies <- as.numeric(RawLoanData$pub_rec_bankruptcies >= 1)
-#RawLoanData$pub_rec_bankruptcies <- NA
-
-# Carries a balance above the 75th percentile of borrowers
-#RawLoanData$had_large_bal <- as.numeric(RawLoanData$revol_bal >= 20000)
-#RawLoanData$revol_bal <- NA
-
-# Has a high utilization
-#RawLoanData$had_high_util <- as.numeric(RawLoanData$revol_util >= .75)
-#RawLoanData$revol_util <- NA
 
 ## Removing Outcome Fields
 RawLoanData$recoveries <- NA
@@ -124,7 +98,7 @@ RawLoanData$tax_liens <- NA
 #RawLoanData <- RawLoanData[-na_index2, ]
 
 
-## Cleaning up factored fieldss
+## Cleaning up factored fields
 
 #Fixing Factors
 RawLoanData$term <- droplevels(RawLoanData$term)
@@ -147,8 +121,6 @@ levels(RawLoanData$home_ownership)
 
 # Removing current loans as they are out of analysis range. 
 
-levels(RawLoanData$loan_status)
-
 RawLoanData$loan_status[which(RawLoanData$loan_status == "Current")] <- NA
 RawLoanData$loan_status[which(RawLoanData$loan_status == "")] <- NA
 RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (16-30 days)")] <- NA
@@ -159,7 +131,6 @@ RawLoanData <- RawLoanData[-na_index3, ]
 
 levels(RawLoanData$loan_status)
 
-
 # Consolidating defaulted loans.  0 will signify paid back loan.  1 will equal default. 
 
 RawLoanData$loan_status <- as.factor(gsub("Does not meet the credit policy. Status:Fully Paid", "0", RawLoanData$loan_status))
@@ -169,8 +140,6 @@ RawLoanData$loan_status <- as.factor(gsub("Charged Off", "1", RawLoanData$loan_s
 RawLoanData$loan_status <- as.factor(gsub("Default", "1", RawLoanData$loan_status))
 
 levels(RawLoanData$loan_status)
-
-
 
 #Dopping final empty variable columns
 dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
@@ -211,9 +180,11 @@ test_set <- RawLoanData[-index_train, ]
 log_model_all <- glm(loan_status ~ ., family = binomial, data = training_set)
 summary(log_model_all)
 predictions_all <- predict(log_model_all, newdata = test_set, type = "response")
-ROC_all <- roc(test_set$loan_status, predictions_all)
+ROC_all <- roc(training_set$loan_status, predictions_all)
 plot(ROC_all)
 auc(ROC_all)
+
+
 
 
 # Log Model 1.  Removing unneccesary variables. 
@@ -297,8 +268,31 @@ tab_class_cloglog
 
 
 # Plot the decision tree
-#plot(tree1)
-#text(tree1)
+plot(tree1)
+text(tree1)
+
+tree_1 <- rpart(loan_status ~ ., method = "class",data = training_set, control = rpart.control(minsplit=50, minbucket=5, cp=0.0001))
+pred_tree1 <- predict(tree1, newdata = test_set, type = "class")
+prp(tree_1)
+
+plot(tree_1, uniform = TRUE)
+text(tree_1)
+
+ROC_tree1<- roc(test_set$loan_status, as.numeric(pred_tree1))
+plot(ROC_tree1)
+auc(ROC_tree1)
+
+# Pruning the tree
+plotcp(tree_1)
+printcp(tree_1)
+cp_index2 <- which.min(tree_1$cptable[, "xerror"])
+tree_min2 <- tree_1$cptable[cp_index2, "CP"]
+ptree_1 <- prune(tree_1, cp = tree_min2)
+plot(ptree_1)
+text(ptree_1)
+
+
+
 
 #Changing Weights
 tree_prior <- rpart(loan_status ~ ., method = "class",data = training_set, parms = list(prior=c(0.6, 0.4)), control = rpart.control(cp = 0.001))
@@ -306,13 +300,6 @@ plot(tree_prior, uniform = TRUE)
 text(tree_prior)
 
 # Pruning the tree
-plotcp(tree_prior)
-printcp(tree_prior)
-cp_index1 <- which.min(tree_prior$cptable[, "xerror"])
-tree_min <- tree_prior$cptable[cp_index1, "CP"]
-ptree_prior <- prune(tree_prior, cp = tree_min)
-plot(ptree_prior)
-text(ptree_prior)
 
 pred_prior <- predict(ptree_prior, newdata = test_set, type = "class")
 confmat_prior <- table(test_set$loan_status, pred_prior)
@@ -354,7 +341,25 @@ auc(ROC_ptree_loss_matrix)
 
 ## Random Forests
 
-forest_all <- randomForest(as.factor(loan_status) ~ ., data = training_set, importance=TRUE, ntree=5000, mtry = 5)
+rf <- randomForest(as.factor(loan_status) ~ fico_range_high + pub_rec + revol_util + inq_last_6mths,
+                   type="classification", data=training_set, importance=TRUE, na.action=na.omit)
+
+
+varImpPlot(rf)
+predictions_rf<- predict(rf, newdata = test_set, type = "class")
+confmat_rf <- table(test_set$loan_status, predictions_rf)
+acc_rf <- sum(diag(confmat_rf)) / nrow(test_set)
+acc_rf
+
+
+ROC_rf <- roc(test_set$loan_status, as.numeric(predictions_rf))
+plot(ROC_rf)
+auc(ROC_rf)
+
+
+
+
+forest_all <- randomForest(as.factor(loan_status) ~ ., data = training_set, importance=TRUE, ntree=500, cutoff=c(.85,.15))
 varImpPlot(forest_all)
 predictions_forest_all <- predict(forest_all, newdata = test_set, type = "class")
 confmat_forest_all <- table(test_set$loan_status, predictions_forest_all)
@@ -362,9 +367,9 @@ acc_forest_all <- sum(diag(confmat_forest_all)) / nrow(test_set)
 acc_forest_all
 
 
-ROC_forest_all <- roc(test_set$loan_status, predictions_forest_all)
+ROC_forest_all <- roc(test_set$loan_status, as.numeric(predictions_forest_all))
 plot(ROC_forest_all)
-auc(ROC__forest_all)
+auc(ROC_forest_all)
 
 
 

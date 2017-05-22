@@ -1,0 +1,279 @@
+---
+title: "Lending Club Analysis - Capstone Project"
+author: "Mike Halpert"
+date: "5/21/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(stats)
+library(gmodels)
+library(data.table)
+library(ggplot2)
+library(pROC)
+library(rpart)
+library(randomForest)
+library(scales)
+```
+
+## Lending Club Loan Default Analysis
+
+Lending Club is a crowd lending service enabling individual investors to offer micro-loans to borrowers.  Lending Club maintains a rich history of loan information on all of its borrowers. The purpose of this analysis is to see if it is possible to build predictive models that could help investors better understand the risks of default, and avoid risky borrowers in their lending criteria.  
+
+
+## About Lending Club
+
+[Lending Club](https://www.lendingclub.com/public/how-peer-lending-works.action) is a crowd lending platform that enables pools of individual investors to act in the capacity of a bank and make loans to individual borrowers.The Lending Club process is straightforward.  A borrower applies for a loan, and then Lending Club posts the application on their platform for individual investors to fund in $25 increments.  These micro-loan obligations are called “notes”. Once the borrower’s loan is funded, they are required to make monthly payments of principal and interest on the notes for either a 36 or 60 momth term.  Lending club assigns each loan a letter grade and interest rate based on the borrower’s credit-worthiness.  The lower risk loans such as “A’s” and “B’s” are much safer, but return a much lower interest rate to lenders, around 3%-4%.  Loans with grading’s such as “E”, “F”, and “G” are much riskier, but can yield returns of over 25%.
+
+## Project Purpose
+
+Many lending club loans are risky and have default potential. The goal of this project is to understand how to identify risky borrowers, while maximizing yield for the investor. As an individual investor, Lending Club offers the potential for returns that exceed traditional investments such as bonds, index ETF’s or even individual stocks.  However, the risk of default is quite real. Similar to credit cards or other uncollateralized loans, many borrowers miss payments, default or go bankrupt creating a total loss of principal for the investor.  The goal of this project is to develop an investing methodology for picking the best high yielding notes that offer the lowest probability of default and principal loss. 
+
+
+## Data Sources
+
+Luckily, Lending Club is a very data intense platform and they provide very thorough statistics and structured data on their entire history of loan performance.  Their loan data goes back all the way through 2007.
+  
+Loan Files:  
+- [Loan Data Files](https://www.lendingclub.com/info/download-data.action)  
+- [Data Dictionary](https://resources.lendingclub.com/LCDataDictionary.xlsx)  
+
+The Loan Data Files include:
+
+-	Borrower demographics, employment and income status
+-	Credit Histories & Credit Scores
+-	Information on existing credit accounts, limits, loan status’, and delinquencies
+-	Loan amounts and purposes
+-	Lending Club repayment histories and late fees
+
+## Approach
+
+The loan data files have incredibly rich information on repayments and defaults spanning back through 2007.  As loans can only be borrowed in 36 and 60 month terms, many of the loans from the early year vintages have already reached full maturity. This provides a very rich training set to create a machine learning model that will predict the probability of default or full repyament based on existing history.  
+
+I will start my exploration with a statistical analysis of loan defaults. I will seek out high correlations between various loan attributes and outcomes.  
+
+My initiail hypothesis for why borrowers default on notes include:
+
+- High debt to income ratios  
+- Decreases in applicant credit scores
+- Frivoulous loan purposes, or loans not tied to refinancing/consolidation
+- Debt consolidation loans that exceed initial debt levels
+- A history of previous loan delinquiencies
+
+This analysis will help inform the approach on developing a machine learning model that will predict the probability of loan repayment to full maturuty. We can test the validity of this model by rewinding the tape 2 years with a sample data set to see how it would perform with recent historic data. By feeding the model loan application information from 2014-2016, we can see what predictions the model would make on various loans. Since we know how this sample of future data will perform, we can test the validity of the machine learning model.
+
+## Cleaning the Data
+
+While the Lending Club data is detailed, it is slightly messy and requires quite a bit of cleaning.  There are a number of issues with the data set including: 
+
+- There are a number of loans that have not matured.  We are only interested in early vintage loans that have either been fully repaid or defaulted.
+- Many of the fields feature text which R interprets as a string instead of a numeric or factor.
+- Many of the fields are highly similar or duplicates of other fields.
+- There are a number of columns that are full of NA's which have been added for later vinatge loans.  These fields are unneeded for this analysis. 
+- The data set features a number of empty columns, NA's and other columns where a null result is a 0.  These need to be normalized. 
+- There are a number of features where the factors have too many levels.  In many of the outputs, our need is to find a binary yes/no output. 
+- The Data Set also features extranious loan outcome fields that are heavily correlated to the loan outcome.  We are only interested in working with data features that we would have when a new loan is published. It would be impossible to have certain elements such as a borrowers credit score 3 years in the future when deciding to fund a loan, so we need to remove these from the data set. 
+
+```{r}
+RawLoanData <- read.csv("LoanStats3a_securev1.csv", skip = "1", sep = ",", header = TRUE)
+
+dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
+RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
+
+
+## Adding new features.  
+
+# Percentage of monthly pay used to pay loan
+RawLoanData$dti <- RawLoanData$dti * 0.01
+RawLoanData$dti_lc <- RawLoanData$installment / (RawLoanData$annual_inc/12)
+#RawLoanData$loan_amnt <- NA
+#RawLoanData$annual_inc <- NA
+
+#Fixing NA's in records where 0's should be present.  
+RawLoanData$int_rate <- as.numeric(gsub("\\%", "", RawLoanData$int_rate))*.01
+RawLoanData$revol_util <- as.numeric(gsub("\\%", "", RawLoanData$revol_util))*.01
+RawLoanData$delinq_2yrs[is.na(RawLoanData$delinq_2yrs)] <- 0
+RawLoanData$inq_last_6mths[is.na(RawLoanData$inq_last_6mths)] <- 0
+RawLoanData$open_acc[is.na(RawLoanData$open_acc)] <- 0
+RawLoanData$pub_rec[is.na(RawLoanData$pub_rec)] <- 0
+RawLoanData$total_acc[is.na(RawLoanData$total_acc)] <- 0
+RawLoanData$acc_now_delinq[is.na(RawLoanData$acc_now_delinq)] <- 0
+RawLoanData$mths_since_last_delinq[is.na(RawLoanData$mths_since_last_delinq)] <- 0
+RawLoanData$open_acc[is.na(RawLoanData$open_acc)] <- 0
+RawLoanData$mths_since_last_record[is.na(RawLoanData$mths_since_last_record)] <- 0
+RawLoanData$revol_util[is.na(RawLoanData$revol_util)] <- 0
+RawLoanData$pub_rec_bankruptcies[is.na(RawLoanData$pub_rec_bankruptcies)] <- 0
+
+
+## Removing outcome fields that distor the machine learning models. 
+RawLoanData$recoveries <- NA
+RawLoanData$collection_recovery_fee <- NA
+RawLoanData$total_pymnt <- NA
+RawLoanData$total_rec_prncp <- NA
+RawLoanData$total_rec_int <- NA
+RawLoanData$total_rec_late_fee<- NA
+RawLoanData$last_pymnt_amnt <- NA
+RawLoanData$last_fico_range_high <- NA
+RawLoanData$pymnt_plan <- NA
+RawLoanData$acc_now_delinq <- NA
+RawLoanData$delinq_amnt <- NA
+
+
+#Removing text heavy & extranious fields that will likely not impact the moddels.
+RawLoanData$url <- NA
+RawLoanData$desc <- NA
+RawLoanData$emp_title <- NA
+RawLoanData$title <- NA
+RawLoanData$application_type <- NA
+RawLoanData$initial_list_status <- NA
+RawLoanData$grade <- NA
+RawLoanData$last_pymnt_d <- NA
+RawLoanData$last_credit_pull_d <- NA
+RawLoanData$earliest_cr_line <- NA
+RawLoanData$zip_code <- NA
+RawLoanData$issue_d <- NA
+RawLoanData$addr_state <- NA
+RawLoanData$next_pymnt_d <- NA
+RawLoanData$id <- NA
+RawLoanData$member_id <- NA
+RawLoanData$funded_amnt_inv <- NA
+RawLoanData$funded_amnt <- NA
+RawLoanData$policy_code <- NA
+RawLoanData$fico_range_low <- NA
+RawLoanData$last_fico_range_low <- NA
+RawLoanData$out_prncp <-NA
+RawLoanData$out_prncp_inv <- NA
+RawLoanData$total_pymnt_inv <- NA
+RawLoanData$chargeoff_within_12_mths <- NA
+RawLoanData$collections_12_mths_ex_med <- NA
+RawLoanData$tax_liens <- NA
+
+
+## Cleaning up factored fields
+
+#Fixing Factors
+RawLoanData$term <- droplevels(RawLoanData$term)
+RawLoanData$sub_grade <- droplevels(RawLoanData$sub_grade)
+RawLoanData$emp_length <- droplevels(RawLoanData$emp_length)
+RawLoanData$verification_status <- droplevels(RawLoanData$verification_status)
+RawLoanData$purpose <- droplevels(RawLoanData$purpose)
+
+#Fixing Home ownership field levels
+
+RawLoanData$home_ownership[which(RawLoanData$home_ownership == "NONE")] <- NA
+RawLoanData$home_ownership[which(RawLoanData$home_ownership == "")] <- NA
+na_index4 <- which(is.na(RawLoanData$home_ownership))
+RawLoanData <- RawLoanData[-na_index4, ]
+RawLoanData$home_ownership <- droplevels(RawLoanData$home_ownership)
+
+
+## Removing current loans as they are out of analysis range. 
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Current")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (16-30 days)")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (31-120 days)")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "In Grace Period")] <- NA
+na_index3 <- which(is.na(RawLoanData$loan_status))
+RawLoanData <- RawLoanData[-na_index3, ]
+
+
+# Consolidating defaulted loans.  0 will signify paid back loan.  1 will equal default. 
+RawLoanData$loan_status <- as.factor(gsub("Does not meet the credit policy. Status:Fully Paid", "0", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Does not meet the credit policy. Status:Charged Off", "1", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Fully Paid", "0", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Charged Off", "1", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Default", "1", RawLoanData$loan_status))
+
+#Dopping final empty variable columns.  This removes extranious loans from the analysis where we do not have enough input information. 
+dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
+RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
+
+```
+
+## Initial Data Inspection
+
+Our data set contains 42512 observations.  This should be more than sufficient to attempt working with various predictive models. 
+
+
+### Rate of Default
+```{r echo=FALSE}
+
+
+ggplot(RawLoanData, aes(loan_status)) + 
+          geom_bar(aes(y = (..count..)/sum(..count..))) +
+          scale_y_continuous(labels=scales::percent) +
+  ylab("relative frequencies")
+
+
+# CrossTable(x = RawLoanData$loan_status)
+```
+We can see that 84.9% of the loans are repaid, and 15.1% of the loans default. 
+
+### Rate of Default by Loan Grade
+```{r echo=FALSE}
+
+ggplot(RawLoanData, aes(x = sub_grade)) + 
+          geom_bar(aes(fill = loan_status)) 
+       
+# CrossTable(x = RawLoanData$sub_grade, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+```
+
+More interestingly we can see that the rate of default goes up substantially with the grade of the loan.  The A1 loans rarely default, but the G rated loans default almost 1/3 of the time. 
+
+### Rate of default by Income
+```{r echo=FALSE}
+
+RawLoanData$inc_cut <- cut(RawLoanData$annual_inc, breaks = seq(0, 300000, by = 25000))
+
+ggplot(RawLoanData, aes(x = inc_cut)) + 
+          geom_bar(aes(fill = loan_status)) 
+
+CrossTable(x = RawLoanData$inc_cut, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+
+RawLoanData$inc_cut <- NA
+
+```
+
+### Rate of default by DTI
+
+```{r echo=FALSE}
+##a <- ggplot(RawLoanData$loan_status)
+
+RawLoanData$dti_cut <- cut(RawLoanData$dti, breaks = seq(0, 1, by = .05))
+
+
+ggplot(RawLoanData, aes(x = dti_cut)) + 
+          geom_bar(aes(fill = loan_status)) 
+
+
+CrossTable(x = RawLoanData$dti_cut, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+```
+
+Rate of default by Credit Score
+
+```{r echo=FALSE}
+##a <- ggplot(RawLoanData$loan_status)
+CrossTable(x = RawLoanData$dti, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+```
+
+Rate of default by Previous Deliquincy
+
+```{r echo=FALSE}
+##a <- ggplot(RawLoanData$loan_status)
+CrossTable(x = RawLoanData$delinq_2yrs, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+```
+
+It appears that having a delinquency in the last 2 years does have an impact on the rate of default.  If borrowers have 0 defaults, they are .2% more likely to repay their loan.  Having between 1 and 4 defaults in the previous 2 years seems to increase the rate of default at a linear rate. However, having over 5 defaults gets into the outlier territory and does not seem to have enough data to display any trends.
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
