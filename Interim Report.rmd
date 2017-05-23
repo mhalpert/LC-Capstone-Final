@@ -83,17 +83,10 @@ dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
 RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
 
 
-## Adding new features.  
-
-# Percentage of monthly pay used to pay loan
-RawLoanData$dti <- RawLoanData$dti * 0.01
-RawLoanData$dti_lc <- RawLoanData$installment / (RawLoanData$annual_inc/12)
-#RawLoanData$loan_amnt <- NA
-#RawLoanData$annual_inc <- NA
-
 #Fixing NA's in records where 0's should be present.  
 RawLoanData$int_rate <- as.numeric(gsub("\\%", "", RawLoanData$int_rate))*.01
 RawLoanData$revol_util <- as.numeric(gsub("\\%", "", RawLoanData$revol_util))*.01
+RawLoanData$dti <- RawLoanData$dti * 0.01
 RawLoanData$delinq_2yrs[is.na(RawLoanData$delinq_2yrs)] <- 0
 RawLoanData$inq_last_6mths[is.na(RawLoanData$inq_last_6mths)] <- 0
 RawLoanData$open_acc[is.na(RawLoanData$open_acc)] <- 0
@@ -192,32 +185,81 @@ RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
 
 ```
 
+
+## Additional Feature Creation
+
+One of the most interesting elements in a loan is understanding debt burden on a borrower.  Can they afford to make loan repayments while paying for everyday items such as housing, food, transportation, etc..  In order to add this feature to our analysis, we are creating a new variable called dti_lc which shows the percentage of monthly income that a lending club installment payment takes up of thier income.
+
+```{r}
+
+RawLoanData$dti_lc <- RawLoanData$installment / (RawLoanData$annual_inc/12)
+
+```
+
+
+## Important Variables
+
+In total we will be analyzing 24 variables.  These are variables and data points that would be available to a lender at the point of deciding wether or not to fund a loan.  
+
+
+|Variable                | Definition 
+|------------------------|--------------------------------------------------------------------------------------------------------
+|Term                    | Length of the loan.  Either 36 or 60 Months                                                             
+|int_rate                | Rate of interest charged on loan
+|installment             | Monthly loan repayment owed by borrower.
+|sub_grade               | Grade of the loan that is assigned by lending club.  This is tied to the interest rate on the loan.
+|emp_lenth               | How long has the borrower been employed with their current employer.
+|home_ownership          | The borrowers housising is either fully owned, mortgaged, rented or they have another arrangement.
+|verification_status     | Have the details of the loan, employment and income been verified by lending club.
+|purpose                 | What is the loan being used for?
+|dti                     | Debt to Income.  What is the borrowrers total debt burden as reported by the credit bureau. 
+|delinq_2years           | How many delinquincies does the borrower have on their credit history over the last 2 years.
+|fico_range_high         | The high end of the reported FICO credit score of the borrower. 
+|inq_last_6mths          | How many credit inquiries has the borrower had on their credit file over the last 6 months. 
+|mths_since_last_delinq  | How many months has it been since the last delinquency on the borrowers credit file.
+|mths_since_last_record  | How many months has it been since the last record on the borrowers credit file. 
+|open_acc                | How many open credit accounts a borrower has on their credit file.
+|pub_rec                 | The number of public redords a borrower has on their credit file.
+|revol_bal               | How much debt does the borrower currently posses.
+|revol_util              | What is the proportion of credit utilized by the borrower.
+|total_acc               | Number of credit accounts that a borrower has open on their credit file.
+|pub_rec_bankruptcies    | Number of times a borrower has declared bankruptcy.
+|dti_lc                  | Debt burden of monthly lending club installment payments relative to a borrowers income.
+|loan_status             | Was the loan repaid, or did the borrower default.
+
+
+
 ## Initial Data Inspection
 
-Our data set contains 42512 observations.  This should be more than sufficient to attempt working with various predictive models. 
+
+
+Our data set contains 42512 observations.  This should be more than sufficient to attempt working with various predictive models. Our defaults will be labeled as 1, and our repaid loans will be labeled as 0.
 
 
 ### Rate of Default
 ```{r echo=FALSE}
 
-
 ggplot(RawLoanData, aes(loan_status)) + 
           geom_bar(aes(y = (..count..)/sum(..count..))) +
           scale_y_continuous(labels=scales::percent) +
-  ylab("relative frequencies")
+          ylab("Relative Frequencies")
 
-
-# CrossTable(x = RawLoanData$loan_status)
 ```
+
 We can see that 84.9% of the loans are repaid, and 15.1% of the loans default. 
 
 ### Rate of Default by Loan Grade
 ```{r echo=FALSE}
 
-ggplot(RawLoanData, aes(x = sub_grade)) + 
-          geom_bar(aes(fill = loan_status)) 
-       
-# CrossTable(x = RawLoanData$sub_grade, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+loan_grade_cnt <- count(group_by(RawLoanData,sub_grade,loan_status))
+
+ggplot(loan_grade_cnt, aes(x=sub_grade, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies")
+
+loan_grade_cnt <- NA
+
 ```
 
 More interestingly we can see that the rate of default goes up substantially with the grade of the loan.  The A1 loans rarely default, but the G rated loans default almost 1/3 of the time. 
@@ -225,55 +267,114 @@ More interestingly we can see that the rate of default goes up substantially wit
 ### Rate of default by Income
 ```{r echo=FALSE}
 
-RawLoanData$inc_cut <- cut(RawLoanData$annual_inc, breaks = seq(0, 300000, by = 25000))
+RawLoanData$inc_cut <- cut(RawLoanData$annual_inc, breaks = seq(0, 300000, by = 20000))
 
-ggplot(RawLoanData, aes(x = inc_cut)) + 
-          geom_bar(aes(fill = loan_status)) 
+inc_cut_cnt <- count(group_by(RawLoanData,inc_cut,loan_status))
 
-CrossTable(x = RawLoanData$inc_cut, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+ggplot(inc_cut_cnt, aes(x=inc_cut, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies")
 
 RawLoanData$inc_cut <- NA
+inc_cut_cnt <- NA
 
 ```
+
+Income does not seem to have a substantial impact on the rate of default.  The rate decreases as incomes approach $40K per year.  Then however it seems to increase again
+
 
 ### Rate of default by DTI
 
 ```{r echo=FALSE}
-##a <- ggplot(RawLoanData$loan_status)
 
 RawLoanData$dti_cut <- cut(RawLoanData$dti, breaks = seq(0, 1, by = .05))
 
+dti_cut_cnt <- count(group_by(RawLoanData,dti_cut,loan_status))
 
-ggplot(RawLoanData, aes(x = dti_cut)) + 
-          geom_bar(aes(fill = loan_status)) 
+ggplot(dti_cut_cnt, aes(x=dti_cut, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies")
 
+RawLoanData$dti_cut <- NA
+dti_cut_cnt <- NA
 
-CrossTable(x = RawLoanData$dti_cut, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
 ```
 
-Rate of default by Credit Score
+The rate of default does not seem to be highly impacted by Debt-to-Income as reported by the credit beureaus.  The variance seems quite small, although steadily increasing as people carry more debt.  This does not seem entirely logical. It is likely more important to asses thier debt levels after a loan is received.  
+
+
+### Rate of default by DTI post funding (DTI_LC)
 
 ```{r echo=FALSE}
-##a <- ggplot(RawLoanData$loan_status)
-CrossTable(x = RawLoanData$dti, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+
+
+RawLoanData$dti_lc_cut <- cut(RawLoanData$dti_lc, breaks = seq(0, 1, by = .05))
+
+dti_lc_cut_cnt <- count(group_by(RawLoanData,dti_lc_cut,loan_status))
+
+ggplot(dti_lc_cut_cnt, aes(x=dti_lc_cut, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies")
+
+RawLoanData$dti_lc_cut <- NA
+dti_lc_cut_cnt <- NA
+
 ```
 
-Rate of default by Previous Deliquincy
+Debt burden seems to have a substantial impact on repayment.  People whose post-funding debt burden is over 40% seem to default on loans nearly 50% of the time.  If their debt burden is 50% for a lending club loan, it is unlikely that they will be able to keep up with other basic expenses such as housing, car and food payments.
+
+
+### Rate of default by Credit Score
 
 ```{r echo=FALSE}
-##a <- ggplot(RawLoanData$loan_status)
-CrossTable(x = RawLoanData$delinq_2yrs, y = RawLoanData$loan_status, prop.r = TRUE, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+
+fico_cnt <- count(group_by(RawLoanData,fico_range_high,loan_status))
+
+ggplot(fico_cnt, aes(x=fico_range_high, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies")
+
+fico_cnt <- NA
+
+```
+
+It appears that defaults are highly influenced by FICO credit scores.  Lower scores seems to have a much higher likelehood of default.  It appears that investing in loans below a score of 640 is highly risky.
+
+
+### Rate of default by Previous Deliquincy
+
+```{r echo=FALSE}
+
+delinq_cnt <- count(group_by(RawLoanData,delinq_2yrs,loan_status))
+
+ggplot(RawLoanData, aes(delinq_2yrs)) +
+       geom_bar()
+
+
+ggplot(delinq_cnt, aes(x=delinq_2yrs, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = "fill") +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies")
+
+delinq_cnt <- NA
+
 ```
 
 It appears that having a delinquency in the last 2 years does have an impact on the rate of default.  If borrowers have 0 defaults, they are .2% more likely to repay their loan.  Having between 1 and 4 defaults in the previous 2 years seems to increase the rate of default at a linear rate. However, having over 5 defaults gets into the outlier territory and does not seem to have enough data to display any trends.
 
+## Initial Data Review
 
-## Including Plots
+The data seems to imply that Lending Club is performing its own basic credit underwriting analysis on borrowers at the time they apply for a loan.  It seems that they are using all the of the borrower info such as income, credit scores, home ownership, credit history, etc. to assign them to a loan.  As such it seems straightforward that A rated loans are less risky than G rated loans.  Likely that A rated loans are not offered to a large subset of borrowers.
 
-You can also embed plots, for example:
+What is most interesting is that post-loan debt burden seems to be the largest indicator of loan default.  It is not so much that it is neccesarily tied to a specific level of income, as it is tied to a borrowers total monthly expesnses.  It appears to have even more significance than previous delinquiencies.  
 
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
+Based on this information, this analysis is going to construct 3 different predictive models to predict loan repayment or default.  It will utilize logistic regression, categorization trees and random forest models. Based on the information above, it seems that categorization treees might work most effectively as there seem to be some pretty straightforward conditions related to a borrowers debt burden. The optimal model should help create a tool that enables a lender to decide wether or not to invest into a loan.  
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+There are also a few questions that this analysis will unfortunately not be able to answer.  First and foremost, there is limtied information about why people default.  We know some of their financial conditions up front, but there are no realtime indicators of default other than monthly non-payment.  It does not say because it is due to loss of a job or increased expenses, etc..  Unfortunately, this means that this data will not provide us with advance warning signs that would help enable us to trade loans already in our portfolio that are more likely to default in the near future. 
+
+
