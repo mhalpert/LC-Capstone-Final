@@ -8,6 +8,8 @@ library(ggplot2)
 library(pROC)
 library(rpart)
 library(randomForest)
+library(rattle)
+library(caret)
 
 ### Cleaning up raw data!
 
@@ -40,9 +42,6 @@ RawLoanData$pub_rec_bankruptcies[is.na(RawLoanData$pub_rec_bankruptcies)] <- 0
 # Percentage of monthly pay used to pay loan
 RawLoanData$dti <- RawLoanData$dti * 0.01
 RawLoanData$dti_lc <- RawLoanData$installment / (RawLoanData$annual_inc/12)
-#RawLoanData$loan_amnt <- NA
-#RawLoanData$annual_inc <- NA
-
 
 
 ## Removing Outcome Fields
@@ -142,8 +141,15 @@ RawLoanData$loan_status <- as.factor(gsub("Default", "1", RawLoanData$loan_statu
 levels(RawLoanData$loan_status)
 
 #Dopping final empty variable columns
+
+RawLoanData$loan_amnt <- NA
+RawLoanData$annual_inc <- NA
+
 dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
 RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
+
+RawLoanData$term <- as.numeric(gsub("\\months", "", RawLoanData$term))
+
 
 ## Plotting Loan Status. 
 
@@ -177,8 +183,9 @@ test_set <- RawLoanData[-index_train, ]
 
 ## Building a logistic model.
 
-log_model_all <- glm(loan_status ~ ., family = binomial, data = training_set)
+log_model_all <- glm(loan_status ~ ., family = binomial(link = logit) , data = training_set)
 summary(log_model_all)
+#predictions_all <- predict(log_model_all, newdata = test_set, type = "response")
 predictions_all <- predict(log_model_all, newdata = test_set, type = "response")
 ROC_all <- roc(training_set$loan_status, predictions_all)
 plot(ROC_all)
@@ -268,12 +275,13 @@ tab_class_cloglog
 
 
 # Plot the decision tree
-plot(tree1)
-text(tree1)
+
 
 tree_1 <- rpart(loan_status ~ ., method = "class",data = training_set, control = rpart.control(minsplit=50, minbucket=5, cp=0.0001))
-pred_tree1 <- predict(tree1, newdata = test_set, type = "class")
+
+pred_tree1 <- predict(tree_1, newdata = test_set, type = "class")
 prp(tree_1)
+fancyRpartPlot(tree_1)
 
 plot(tree_1, uniform = TRUE)
 text(tree_1)
@@ -313,6 +321,8 @@ auc(ROC_ptree_prior)
 
 
 
+
+
 # Loss Matrix Tree
 tree_loss_matrix <- rpart(loan_status ~ ., method = "class", data =  training_set, parms = list(loss = matrix(c(0, 7.5, 1, 0), ncol=2)), control = rpart.control(cp = 0.001))
 plot(tree_loss_matrix, uniform = TRUE)
@@ -344,6 +354,9 @@ auc(ROC_ptree_loss_matrix)
 rf <- randomForest(as.factor(loan_status) ~ fico_range_high + pub_rec + revol_util + inq_last_6mths,
                    type="classification", data=training_set, importance=TRUE, na.action=na.omit)
 
+rf <- ranger(as.factor(loan_status) ~ ., data=training_set)
+
+
 
 varImpPlot(rf)
 predictions_rf<- predict(rf, newdata = test_set, type = "class")
@@ -359,7 +372,7 @@ auc(ROC_rf)
 
 
 
-forest_all <- randomForest(as.factor(loan_status) ~ ., data = training_set, importance=TRUE, ntree=500, cutoff=c(.85,.15))
+forest_all <- rf(as.factor(loan_status) ~ ., data = training_set, importance=TRUE, ntree=500, cutoff=c(.85,.15))
 varImpPlot(forest_all)
 predictions_forest_all <- predict(forest_all, newdata = test_set, type = "class")
 confmat_forest_all <- table(test_set$loan_status, predictions_forest_all)
