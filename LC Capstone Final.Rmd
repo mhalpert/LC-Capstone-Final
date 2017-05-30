@@ -216,7 +216,7 @@ In total we will be analyzing 24 variables.  These are variables and data points
 |int_rate                | Rate of interest charged on loan
 |installment             | Monthly loan repayment owed by borrower.
 |sub_grade               | Grade of the loan that is assigned by lending club.  This is tied to the interest rate on the loan.
-|emp_lenth               | How long has the borrower been employed with their current employer.
+|emp_length               | How long has the borrower been employed with their current employer.
 |home_ownership          | The borrowers housising is either fully owned, mortgaged, rented or they have another arrangement.
 |verification_status     | Have the details of the loan, employment and income been verified by lending club.
 |purpose                 | What is the loan being used for?
@@ -227,7 +227,7 @@ In total we will be analyzing 24 variables.  These are variables and data points
 |mths_since_last_delinq  | How many months has it been since the last delinquency on the borrowers credit file.
 |mths_since_last_record  | How many months has it been since the last record on the borrowers credit file. 
 |open_acc                | How many open credit accounts a borrower has on their credit file.
-|pub_rec                 | The number of public redords a borrower has on their credit file.
+|pub_rec                 | The number of public records a borrower has on their credit file.
 |revol_bal               | How much debt does the borrower currently posses.
 |revol_util              | What is the proportion of credit utilized by the borrower.
 |total_acc               | Number of credit accounts that a borrower has open on their credit file.
@@ -295,7 +295,7 @@ inc_cut_cnt <- NA
 
 ```
 
-Income does not seem to have a substantial impact on the rate of default.  The rate decreases as incomes approach $40K per year.  Then however it seems to increase again
+Income does not seem to have a substantial impact on the rate of default.  The rate decreases as incomes approach $40K per year.  Then however it seems to increase again.
 
 
 ### Rate of default by DTI
@@ -434,7 +434,7 @@ Lastly, our data set is fairly imbalanced as 85% of the loans are repaid, and on
 
 ```{r}
 # Rebalancing data set using SMOTE.  Undersampling method.
-
+set.seed(345)
 RawLoanData$loan_status <- as.factor(RawLoanData$loan_status)
 RawLoanData <- SMOTE(loan_status ~ ., RawLoanData, k = 5, perc.over = 100, perc.under=200)
 
@@ -445,7 +445,7 @@ RawLoanData <- SMOTE(loan_status ~ ., RawLoanData, k = 5, perc.over = 100, perc.
 Our data set will be split into a training set and a test set.  70% of the data will be used to train the model and 30% of the data will be used as a test set for validation. 
 
 ```{r}
-set.seed(345)
+
 index_train <- sample(1:nrow(RawLoanData), .7 * nrow(RawLoanData))
 training_set <- RawLoanData[index_train, ]
 test_set <- RawLoanData[-index_train, ]
@@ -499,7 +499,7 @@ model_glm
 max(model_glm[["results"]][["ROC"]])
 ```
 
-The model produces an AUC of .714, with a sensitivity of .66 and a specificity of .65.  This model is ok, and better than a baseline prediction of .5 - but is not neccisarily a model you would want to make investment decisions on. 
+The model produces an AUC of .722, with a sensitivity of .66 and a specificity of .65.  This model is ok, and better than a baseline prediction of .5 - but is not neccisarily a model you would want to make investment decisions on. 
 
 ### GLMNET - Lasso and Elastic-Net Regularized Generalized Linear Models
 
@@ -515,7 +515,7 @@ model_glmnet
 max(model_glmnet[["results"]][["ROC"]])
 ```
 
-The glmnet model is incrementally better than the standard glm model with an AUC of .714. 
+The glmnet model is comparabe to the standard glm model with an AUC of .722. 
 
 ### LogitBoost - Boosted Logistic Regression
 
@@ -531,7 +531,7 @@ model_logit
 max(model_logit[["results"]][["ROC"]])
 ```
 
-The boosted logistic regression is also incrementally better than the previous two models.  The AUC is .725. While this is better, its not spectacular for investment grade decision making. 
+The boosted logistic regression is also incrementally better than the previous two models.  The AUC is .712. While this is better, its not spectacular for investment grade decision making. 
 
 
 ### CTREE - Conditional Inference Tree
@@ -549,7 +549,7 @@ model_ctree
 max(model_ctree[["results"]][["ROC"]])
 ```
 
-The ctree model returned an AUC of .73 with a sensitivity of .64 and specificity of .69. This model has the best quality thus far.  
+The ctree model returned an AUC of .74 with a sensitivity of .67 and specificity of .69. This model has the best quality thus far.  
 
 
 ### RPART - Categorization and Regression Trees
@@ -568,7 +568,7 @@ model_rpart
 max(model_rpart[["results"]][["ROC"]])
 ```
 
-The CART model returned an AUC of .767 with a sensitivity of .67 and specificity of .72. This model is of reasonably higher quality than the previous regression based models.   
+The CART model returned an AUC of .772 with a sensitivity of .67 and specificity of .72. This model is of reasonably higher quality than the previous regression based models.   
 
 
 ### RF - Random Forest
@@ -590,7 +590,7 @@ model_rf
 max(model_rf[["results"]][["ROC"]])
 ```
 
-The random forest model produces a very highly quality prediction.  It is computationally expensive and takes a long time to process, however - this is clearly a reasonably high quality prediction.  The AUC comes back as .848 with a sensitivity of .73 and specificity of .78.  This score should be usable for our loan predictions. 
+The random forest model produces a very highly quality prediction.  It is computationally expensive and takes a long time to process, however - this is clearly a reasonably high quality prediction.  The AUC comes back as .851 with a sensitivity of .74 and specificity of .78.  This score should be usable for our loan predictions. 
 
 ### GBM model - Generalized Boosted Regression Model
 
@@ -609,7 +609,7 @@ max(model_gbm[["results"]][["ROC"]])
 
 ```
 
-The GBM model appears highly performance with a AUC of just under .820. This is much better than the regression based models. 
+The GBM model appears highly performance with a AUC of just under .82!. This is much better than the regression based models. 
 
 # Model Evaluations
 
@@ -664,7 +664,7 @@ plot(roc_gbm)
 
 ```
 
-The GBM model performed well, with an accuracy os 73%.  The sensivity was .67 and the specificity was . 79.  THe AUC for predicted values was .7281.  What is troubling is that the model still predcited that 1286 loans would be repaid, but in fact defaulted.  This is a very high false negative rate of 16.6% which would result in a fairly substantial loss of principal.  By adjusting the cutoff value, it would be likely that we could imporive this false negative rate, as false positives would inclur lower losses for the investor.  
+The GBM model performed well, with an accuracy of 74%.  The sensivity was .70 and the specificity was .77.  THe AUC for predicted values was .7281.  What is troubling is that the model still predcited that 1139 loans would be repaid, but in fact defaulted.  This is a very high false negative rate of 14.7% which would result in a fairly substantial loss of principal.  By adjusting the cutoff value, it would be likely that we could imporive this false negative rate, as false positives would inclur lower losses for the investor.  
 
 ## Random Forest Predictions
 
@@ -679,7 +679,7 @@ plot(roc_rf)
 
 ```
 
-The Random Forest model performed well, with an accuracy os 75%.  The sensivity was .72 and the specificity was .79.  The AUC was .7557.  While the accuracy was only slightly higher than the GBM model predictions, the false negative rate was much lower with 14.14% with 1090 predicted repaid loans defaulting.  While better than GBM, this is also still a very high false negative rate which would result in a fairly substantial loss of principal.  By adjusting the cutoff value, it would be likely that we could imporive this false negative rate, as false positives would inclur lower losses for the investor.  
+The Random Forest model performed well, with an accuracy of 76.8%.  The sensitivity was .74 and the specificity was .79.  The AUC was .768.  While the accuracy was only slightly higher than the GBM model predictions, the false negative rate was much lower with 12.8% with 993 predicted repaid loans defaulting.  While better than GBM, this is also still a very high false negative rate which would result in a fairly substantial loss of principal.  By adjusting the cutoff value, it would be likely that we could imporive this false negative rate, as false positives would incur lower losses for the investor.  
 
 # Conclusions
 
