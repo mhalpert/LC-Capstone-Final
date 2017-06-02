@@ -1,0 +1,737 @@
+---
+title: "Lending Club Analysis - Capstone Project"
+author: "Mike Halpert"
+date: "5/26/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(stats)
+library(gmodels)
+library(data.table)
+library(ggplot2)
+library(pROC)
+library(rpart)
+library(randomForest)
+library(scales)
+library(caret)
+library(DMwR)
+```
+
+## Lending Club Loan Default Analysis
+
+Lending Club is a crowd lending service enabling individual investors to offer micro-loans to borrowers.  Lending Club maintains a rich history of loan information on all of its borrowers. The purpose of this analysis is to see if it is possible to build predictive models that could help investors better understand the risks of default, and avoid risky borrowers in their lending criteria.  
+
+
+## About Lending Club
+
+[Lending Club](https://www.lendingclub.com/public/how-peer-lending-works.action) is a crowd lending platform that enables pools of individual investors to act in the capacity of a bank and make loans to individual borrowers.The Lending Club process is straightforward.  A borrower applies for a loan, and then Lending Club posts the application on their platform for individual investors to fund in $25 increments.  These micro-loan obligations are called “notes”. Once the borrower’s loan is funded, they are required to make monthly payments of principal and interest on the notes for either a 36 or 60 momth term.  Lending club assigns each loan a letter grade and interest rate based on the borrower’s credit-worthiness.  The lower risk loans such as “A’s” and “B’s” are much safer, but return a much lower interest rate to lenders, around 3%-4%.  Loans with grading’s such as “E”, “F”, and “G” are much riskier, but can yield returns of over 25%.
+
+## Project Purpose
+
+Many lending club loans are risky and have default potential. The goal of this project is to understand how to identify risky borrowers, while maximizing yield for the investor. As an individual investor, Lending Club offers the potential for returns that exceed traditional investments such as bonds, index ETF’s or even individual stocks.  However, the risk of default is quite real. Similar to credit cards or other uncollateralized loans, many borrowers miss payments, default or go bankrupt creating a total loss of principal for the investor.  The goal of this project is to develop an investing methodology for picking the best high yielding notes that offer the lowest probability of default and principal loss. 
+
+
+## Data Sources
+
+Luckily, Lending Club is a very data intense platform and they provide very thorough statistics and structured data on their entire history of loan performance.  Their loan data goes back all the way through 2007.
+  
+Loan Files:  
+- [Loan Data Files](https://www.lendingclub.com/info/download-data.action)  
+- [Data Dictionary](https://resources.lendingclub.com/LCDataDictionary.xlsx)  
+
+The Loan Data Files include:
+
+-	Borrower demographics, employment and income status
+-	Credit Histories & Credit Scores
+-	Information on existing credit accounts, limits, loan status’, and delinquencies
+-	Loan amounts and purposes
+-	Lending Club repayment histories and late fees
+
+## Approach
+
+The loan data files have incredibly rich information on repayments and defaults spanning back through 2007.  As loans can only be borrowed in 36 and 60 month terms, many of the loans from the early year vintages have already reached full maturity. This provides a very rich training set to create a machine learning model that will predict the probability of default or full repyament based on existing history.  
+
+I will start my exploration with a statistical analysis of loan defaults. I will seek out high correlations between various loan attributes and outcomes.  
+
+My initiail hypothesis for why borrowers default on notes include:
+
+- High debt to income ratios  
+- Decreases in applicant credit scores
+- Frivoulous loan purposes, or loans not tied to refinancing/consolidation
+- Debt consolidation loans that exceed initial debt levels
+- A history of previous loan delinquiencies
+
+This analysis will help inform the approach on developing a machine learning model that will predict the probability of loan repayment to full maturuty. We can test the validity of this model by rewinding the tape 2 years with a sample data set to see how it would perform with recent historic data. By feeding the model loan application information from 2014-2016, we can see what predictions the model would make on various loans. Since we know how this sample of future data will perform, we can test the validity of the machine learning model.
+
+## Cleaning the Data
+
+While the Lending Club data is detailed, it is slightly messy and requires quite a bit of cleaning.  There are a number of issues with the data set including: 
+
+- There are a number of loans that have not matured.  We are only interested in early vintage loans that have either been fully repaid or defaulted.
+- Many of the fields feature text which R interprets as a string instead of a numeric or factor.
+- Many of the fields are highly similar or duplicates of other fields.
+- There are a number of columns that are full of NA's which have been added for later vinatge loans.  These fields are unneeded for this analysis. 
+- The data set features a number of empty columns, NA's and other columns where a null result is a 0.  These need to be normalized. 
+- There are a number of features where the factors have too many levels.  In many of the outputs, our need is to find a binary yes/no output. 
+- The Data Set also features extranious loan outcome fields that are heavily correlated to the loan outcome.  We are only interested in working with data features that we would have when a new loan is published. It would be impossible to have certain elements such as a borrowers credit score 3 years in the future when deciding to fund a loan, so we need to remove these from the data set. 
+
+
+```{r}
+RawLoanData <- read.csv("LoanStats3a_securev1.csv", skip = "1", sep = ",", header = TRUE)
+
+dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
+RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
+
+
+#Fixing NA's in records where 0's should be present.  
+RawLoanData$int_rate <- as.numeric(gsub("\\%", "", RawLoanData$int_rate))*.01
+RawLoanData$revol_util <- as.numeric(gsub("\\%", "", RawLoanData$revol_util))*.01
+RawLoanData$dti <- RawLoanData$dti * 0.01
+RawLoanData$delinq_2yrs[is.na(RawLoanData$delinq_2yrs)] <- 0
+RawLoanData$inq_last_6mths[is.na(RawLoanData$inq_last_6mths)] <- 0
+RawLoanData$open_acc[is.na(RawLoanData$open_acc)] <- 0
+RawLoanData$pub_rec[is.na(RawLoanData$pub_rec)] <- 0
+RawLoanData$total_acc[is.na(RawLoanData$total_acc)] <- 0
+RawLoanData$acc_now_delinq[is.na(RawLoanData$acc_now_delinq)] <- 0
+RawLoanData$mths_since_last_delinq[is.na(RawLoanData$mths_since_last_delinq)] <- 0
+RawLoanData$open_acc[is.na(RawLoanData$open_acc)] <- 0
+RawLoanData$mths_since_last_record[is.na(RawLoanData$mths_since_last_record)] <- 0
+RawLoanData$revol_util[is.na(RawLoanData$revol_util)] <- 0
+RawLoanData$pub_rec_bankruptcies[is.na(RawLoanData$pub_rec_bankruptcies)] <- 0
+
+
+## Removing outcome fields that distor the machine learning models. 
+RawLoanData$recoveries <- NA
+RawLoanData$collection_recovery_fee <- NA
+RawLoanData$total_pymnt <- NA
+RawLoanData$total_rec_prncp <- NA
+RawLoanData$total_rec_int <- NA
+RawLoanData$total_rec_late_fee<- NA
+RawLoanData$last_pymnt_amnt <- NA
+RawLoanData$last_fico_range_high <- NA
+RawLoanData$pymnt_plan <- NA
+RawLoanData$acc_now_delinq <- NA
+RawLoanData$delinq_amnt <- NA
+
+
+#Removing text heavy & extranious fields that will likely not impact the moddels.
+RawLoanData$url <- NA
+RawLoanData$desc <- NA
+RawLoanData$emp_title <- NA
+RawLoanData$title <- NA
+RawLoanData$application_type <- NA
+RawLoanData$initial_list_status <- NA
+RawLoanData$grade <- NA
+RawLoanData$last_pymnt_d <- NA
+RawLoanData$last_credit_pull_d <- NA
+RawLoanData$earliest_cr_line <- NA
+RawLoanData$zip_code <- NA
+RawLoanData$issue_d <- NA
+RawLoanData$addr_state <- NA
+RawLoanData$next_pymnt_d <- NA
+RawLoanData$id <- NA
+RawLoanData$member_id <- NA
+RawLoanData$funded_amnt_inv <- NA
+RawLoanData$funded_amnt <- NA
+RawLoanData$policy_code <- NA
+RawLoanData$fico_range_low <- NA
+RawLoanData$last_fico_range_low <- NA
+RawLoanData$out_prncp <-NA
+RawLoanData$out_prncp_inv <- NA
+RawLoanData$total_pymnt_inv <- NA
+RawLoanData$chargeoff_within_12_mths <- NA
+RawLoanData$collections_12_mths_ex_med <- NA
+RawLoanData$tax_liens <- NA
+
+
+## Cleaning up factored fields
+
+
+#Fixing Home ownership field levels
+
+RawLoanData$home_ownership[which(RawLoanData$home_ownership == "NONE")] <- NA
+RawLoanData$home_ownership[which(RawLoanData$home_ownership == "")] <- NA
+na_index4 <- which(is.na(RawLoanData$home_ownership))
+RawLoanData <- RawLoanData[-na_index4, ]
+RawLoanData$home_ownership <- droplevels(RawLoanData$home_ownership)
+
+
+## Removing current loans as they are out of analysis range. 
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Current")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (16-30 days)")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "Late (31-120 days)")] <- NA
+RawLoanData$loan_status[which(RawLoanData$loan_status == "In Grace Period")] <- NA
+na_index3 <- which(is.na(RawLoanData$loan_status))
+RawLoanData <- RawLoanData[-na_index3, ]
+
+
+# Consolidating defaulted loans.  0 will signify paid back loan.  1 will equal default. 
+RawLoanData$loan_status <- as.factor(gsub("Does not meet the credit policy. Status:Fully Paid", "0", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Does not meet the credit policy. Status:Charged Off", "1", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Fully Paid", "0", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Charged Off", "1", RawLoanData$loan_status))
+RawLoanData$loan_status <- as.factor(gsub("Default", "1", RawLoanData$loan_status))
+
+#Fixing Factors
+RawLoanData$term <- droplevels(RawLoanData$term)
+RawLoanData$sub_grade <- droplevels(RawLoanData$sub_grade)
+RawLoanData$emp_length <- droplevels(RawLoanData$emp_length)
+RawLoanData$verification_status <- droplevels(RawLoanData$verification_status)
+RawLoanData$purpose <- droplevels(RawLoanData$purpose)
+
+
+#Dopping final empty variable columns.  This removes extranious loans from the analysis where we do not have enough input information. 
+dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
+RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
+
+RawLoanData$loan_status <- ifelse(RawLoanData$loan_status == 1, "Default", "Repaid")
+
+```
+
+
+
+## Additional Feature Creation
+
+One of the most interesting elements in a loan is understanding debt burden on a borrower.  Can they afford to make loan repayments while paying for everyday items such as housing, food, transportation, etc..  In order to add this feature to our analysis, we are creating a new variable called dti_lc which shows the percentage of monthly income that a lending club installment payment takes up of thier income.
+
+```{r}
+
+RawLoanData$dti_lc <- RawLoanData$installment / (RawLoanData$annual_inc/12)
+
+```
+
+
+## Important Variables
+
+In total we will be analyzing 24 variables.  These are variables and data points that would be available to a lender at the point of deciding wether or not to fund a loan.  
+
+
+|Variable                | Definition 
+|------------------------|--------------------------------------------------------------------------------------------------------
+|Term                    | Length of the loan.  Either 36 or 60 Months                                                             
+|int_rate                | Rate of interest charged on loan
+|installment             | Monthly loan repayment owed by borrower.
+|sub_grade               | Grade of the loan that is assigned by lending club.  This is tied to the interest rate on the loan.
+|emp_length               | How long has the borrower been employed with their current employer.
+|home_ownership          | The borrowers housising is either fully owned, mortgaged, rented or they have another arrangement.
+|verification_status     | Have the details of the loan, employment and income been verified by lending club.
+|purpose                 | What is the loan being used for?
+|dti                     | Debt to Income.  What is the borrowrers total debt burden as reported by the credit bureau. 
+|delinq_2years           | How many delinquincies does the borrower have on their credit history over the last 2 years.
+|fico_range_high         | The high end of the reported FICO credit score of the borrower. 
+|inq_last_6mths          | How many credit inquiries has the borrower had on their credit file over the last 6 months. 
+|mths_since_last_delinq  | How many months has it been since the last delinquency on the borrowers credit file.
+|mths_since_last_record  | How many months has it been since the last record on the borrowers credit file. 
+|open_acc                | How many open credit accounts a borrower has on their credit file.
+|pub_rec                 | The number of public records a borrower has on their credit file.
+|revol_bal               | How much debt does the borrower currently posses.
+|revol_util              | What is the proportion of credit utilized by the borrower.
+|total_acc               | Number of credit accounts that a borrower has open on their credit file.
+|pub_rec_bankruptcies    | Number of times a borrower has declared bankruptcy.
+|dti_lc                  | Debt burden of monthly lending club installment payments relative to a borrowers income.
+|loan_status             | Was the loan repaid, or did the borrower default.
+
+
+
+## Initial Data Inspection
+
+
+
+Our data set contains 42512 observations.  This should be more than sufficient to attempt working with various predictive models. Our defaults will be labeled as 1, and our repaid loans will be labeled as 0.
+
+
+### Rate of Default
+```{r echo=FALSE}
+
+ggplot(RawLoanData, aes(loan_status)) + 
+          geom_bar(aes(y = (..count..)/sum(..count..))) +
+          scale_y_continuous(labels=scales::percent) +
+          ylab("Relative Frequencies") +
+          ggtitle("Rate of Default") + 
+          theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+We can see that 84.9% of the loans are repaid, and 15.1% of the loans default. 
+
+### Rate of Default by Loan Grade
+```{r echo=FALSE}
+
+loan_grade_cnt <- count(group_by(RawLoanData,sub_grade,loan_status))
+
+ggplot(loan_grade_cnt, aes(x=sub_grade, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = position_fill(reverse = TRUE)) +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies") + 
+  ggtitle("Rate of Default by Loan Grade") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+loan_grade_cnt <- NA
+
+```
+
+More interestingly we can see that the rate of default goes up substantially with the grade of the loan.  The A1 loans rarely default, but the G rated loans default almost 1/3 of the time. 
+
+### Rate of default by Income
+```{r echo=FALSE}
+
+RawLoanData$inc_cut <- cut(RawLoanData$annual_inc, breaks = seq(0, 300000, by = 20000))
+inc_cut_cnt <- count(group_by(RawLoanData,inc_cut,loan_status))
+
+ggplot(inc_cut_cnt, aes(x=inc_cut, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = position_fill(reverse = TRUE))  +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies") + 
+  xlab("Income Levels") +
+  ggtitle("Rate of Default by Income Range") + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1), plot.title = element_text(hjust = 0.5)) 
+
+RawLoanData$inc_cut <- NA
+inc_cut_cnt <- NA
+
+```
+
+Income does not seem to have a substantial impact on the rate of default.  The rate decreases as incomes approach $40K per year.  Then however it seems to increase again.
+
+
+### Rate of default by DTI
+
+```{r echo=FALSE}
+
+RawLoanData$dti_cut <- cut(RawLoanData$dti, breaks = seq(0, 1, by = .05))
+
+dti_cut_cnt <- count(group_by(RawLoanData,dti_cut,loan_status))
+
+ggplot(dti_cut_cnt, aes(x=dti_cut, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = position_fill(reverse = TRUE)) +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies") + 
+  xlab("Debt to Income Ratio") + 
+  ggtitle("Rate of Default by Debt to Income Range") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+RawLoanData$dti_cut <- NA
+dti_cut_cnt <- NA
+
+```
+
+The rate of default does not seem to be highly impacted by Debt-to-Income as reported by the credit beureaus.  The variance seems quite small, although steadily increasing as people carry more debt.  This does not seem entirely logical. It is likely more important to asses thier debt levels after a loan is received.  
+
+
+### Rate of default by DTI post funding (DTI_LC)
+
+```{r echo=FALSE}
+
+
+RawLoanData$dti_lc_cut <- cut(RawLoanData$dti_lc, breaks = seq(0, 1, by = .05))
+
+dti_lc_cut_cnt <- count(group_by(RawLoanData,dti_lc_cut,loan_status))
+
+ggplot(dti_lc_cut_cnt, aes(x=dti_lc_cut, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = position_fill(reverse = TRUE)) +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies") + 
+  xlab("Debt Burden (Monthly Payment / Income)") +
+  ggtitle("Rate of Default by Monthly Debt Burden") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+RawLoanData$dti_lc_cut <- NA
+dti_lc_cut_cnt <- NA
+
+```
+
+Debt burden seems to have a substantial impact on repayment.  People whose post-funding debt burden is over 40% seem to default on loans nearly 50% of the time.  If their debt burden is 50% for a lending club loan, it is unlikely that they will be able to keep up with other basic expenses such as housing, car and food payments.
+
+
+### Rate of default by Credit Score
+
+```{r echo=FALSE}
+
+fico_cnt <- count(group_by(RawLoanData,fico_range_high,loan_status))
+
+ggplot(fico_cnt, aes(x=fico_range_high, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = position_fill(reverse = TRUE)) +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies") + 
+  xlab("Reported FICO Scores") + 
+  ggtitle("Rate of Default by Credit Score") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+fico_cnt <- NA
+
+```
+
+It appears that defaults are highly influenced by FICO credit scores.  Lower scores seems to have a much higher likelehood of default.  It appears that investing in loans below a score of 640 is highly risky.
+
+
+### Rate of default by Previous Deliquincy
+
+```{r echo=FALSE}
+
+delinq_cnt <- count(group_by(RawLoanData,delinq_2yrs,loan_status))
+
+ggplot(RawLoanData, aes(delinq_2yrs)) +
+    geom_bar() + 
+    ylab("Volume") +
+    xlab("# of Delinquenices") +
+    ggtitle("Volume of Loan's by Delinquiency Count") + 
+    theme(plot.title = element_text(hjust = 0.5))
+
+
+ggplot(delinq_cnt, aes(x=delinq_2yrs, y=n, fill=loan_status)) +
+  geom_bar(stat="identity", position = position_fill(reverse = TRUE)) +
+  scale_y_continuous(labels = percent_format()) +
+  ylab("Relative Frequencies") + 
+  xlab("# of Delinquenices") + 
+  ggtitle("Rate of Default by Deliquency Count") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+delinq_cnt <- NA
+
+```
+
+It appears that having a delinquency in the last 2 years does have an impact on the rate of default.  If borrowers have 0 defaults, they are .2% more likely to repay their loan.  Having between 1 and 4 defaults in the previous 2 years seems to increase the rate of default at a linear rate. However, having over 5 defaults gets into the outlier territory and does not seem to have enough data to display any trends.
+
+## Initial Data Review
+
+The data seems to imply that Lending Club is performing its own basic credit underwriting analysis on borrowers at the time they apply for a loan.  It seems that they are using all the of the borrower info such as income, credit scores, home ownership, credit history, etc. to assign them to a loan.  As such it seems straightforward that A rated loans are less risky than G rated loans.  Likely that A rated loans are not offered to a large subset of borrowers.
+
+What is most interesting is that post-loan debt burden seems to be the largest indicator of loan default.  It is not so much that it is neccesarily tied to a specific level of income, as it is tied to a borrowers total monthly expesnses.  It appears to have even more significance than previous delinquiencies.  
+
+Based on this information, this analysis is going to construct 3 different predictive models to predict loan repayment or default.  It will utilize logistic regression, categorization trees and random forest models. Based on the information above, it seems that categorization treees might work most effectively as there seem to be some pretty straightforward conditions related to a borrowers debt burden. The optimal model should help create a tool that enables a lender to decide wether or not to invest into a loan.  
+
+There are also a few questions that this analysis will unfortunately not be able to answer.  First and foremost, there is limtied information about why people default.  We know some of their financial conditions up front, but there are no realtime indicators of default other than monthly non-payment.  It does not say because it is due to loss of a job or increased expenses, etc..  Unfortunately, this means that this data will not provide us with advance warning signs that would help enable us to trade loans already in our portfolio that are more likely to default in the near future. 
+
+## Predictive Modeling
+
+We will test a number of predictive models agains the data set to see if we can build a high quality model that can predict loan defaults.  To enure that we are doing apples to apples comparison and cross validation between models, we will use ROC and AUC as our metrics for comparing model predictive quality. 
+
+### Final Data Cleanup
+
+There are a few final elements of cleanup that we need to perform in order to ensure that the data sets are ready for predictive modeling. First we will remove the loan ammount and annual income fields as they are highly correlated to the dti_lc feature, and would likely cause overfitting.  We must also make some minor factor adjustments to ensure that the models process correctly. 
+
+
+```{r}
+
+# Removing the annual income and loan ammount fields
+RawLoanData$loan_amnt <- NA
+RawLoanData$annual_inc <- NA
+dropcolumnindex <- lapply(RawLoanData, function(x) sum(is.na(x))) >= 42300
+RawLoanData <- RawLoanData[ , dropcolumnindex == FALSE]
+
+# RawLoanData$term <- as.factor(gsub("\\months", "", RawLoanData$term))
+
+```
+
+
+### Splitting the Data Set
+
+Our data set will be split into a training set and a test set.  70% of the data will be used to train the model and 30% of the data will be used as a test set for validation. 
+
+```{r}
+set.seed(345)
+RawLoanData$loan_status <- as.factor(RawLoanData$loan_status)
+index_train <- sample(1:nrow(RawLoanData), .8 * nrow(RawLoanData))
+training_set <- RawLoanData[index_train, ]
+test_set <- RawLoanData[-index_train, ]
+
+```
+
+Lastly, our data set is fairly imbalanced as 85% of the loans are repaid, and only 15% default.  In order to train higher quality models, we will undersample our data sets to ensure a more even distribution of loans.  Our sample size is sufficiently large enough to ensure that we can reduce our data set to give us test set with 50% defaults to 50% repyaments.
+
+
+```{r}
+# Rebalancing data set using SMOTE.  Undersampling method.
+
+training_set <- SMOTE(loan_status ~ ., training_set, k = 5, perc.under=200, perc.over = 100)
+
+```
+
+
+### Model Selection and configuration
+
+The Caret function allows us to evalute multiple model types easily with similar parameters.  We will work with the following models for our evaluation. 
+
+* glm - Generalized Linear Model
+* glmnet - Lasso and Elastic-Net Regularized Generalized Linear Models
+* LogitBoost - Boosted Logistic Regression
+* ctree - Conditional Inference Tree
+* rpart - Categorization and Regression Trees
+* rf - Random Forest
+* gbm - Stochastic Gradient Boosting
+
+Frist we must define universal Caret control parameters for all models.  We will utilize 10 fold cross-validation for our models.  We will also utilize multiple cores for parallel processing in large models such as Random Forest. 
+
+```{r}
+
+library(doMC)
+registerDoMC(cores = 2)
+
+myControl <- trainControl(
+  method = "cv",
+  number = 10,
+  summaryFunction = twoClassSummary,
+  classProbs = TRUE, # IMPORTANT!
+  verboseIter = TRUE, 
+  allowParallel = TRUE)
+```
+
+
+### GLM - Generalized Linear Model
+
+The glm based model will operate as a baseline logistic regression.  
+
+```{r}
+# glm model
+model_glm <- train(loan_status ~ ., 
+                      training_set,
+                      metric = "ROC",
+                      method = "glm",
+                      preProcess = c("zv", "center", "scale"),
+                      family = "binomial",
+                      trControl = myControl)
+
+model_glm
+max(model_glm[["results"]][["ROC"]])
+```
+
+The model produces an AUC of .72, with a sensitivity of .68 and a specificity of .64. This model is ok, and better than a baseline prediction of .5 - but is not neccisarily a model you would want to make investment decisions on. 
+
+### GLMNET - Lasso and Elastic-Net Regularized Generalized Linear Models
+
+
+```{r}
+model_glmnet <- train(loan_status ~ ., 
+                      training_set,
+                      metric = "ROC",
+                      method = "glmnet",
+                      preProcess = (c("zv", "center", "scale")),
+                      trControl = myControl)
+model_glmnet
+max(model_glmnet[["results"]][["ROC"]])
+```
+
+The glmnet model is comparabe to the standard glm model with an AUC of .72. On the training set it has a sensitivity of .67 and specificity of .65.
+
+### LogitBoost - Boosted Logistic Regression
+
+```{r}
+model_logit <- train(loan_status ~ ., 
+                     training_set,
+                     metric = "ROC",
+                     method = "LogitBoost",
+                     preProcess = (c("zv", "center", "scale")),
+                     trControl = myControl)
+
+model_logit
+max(model_logit[["results"]][["ROC"]])
+```
+
+The boosted logistic regression is also comparable to the other 2 previous regression models.  The AUC is .71 with a specificity of .69 and a sensitivity of .74
+
+
+### CTREE - Conditional Inference Tree
+
+```{r}
+model_ctree <- train(
+  loan_status ~ ., 
+  training_set,
+  metric = "ROC",
+  method = "ctree",
+  preProcess = (c("nzv", "center", "scale")),
+  trControl = myControl
+)
+model_ctree
+max(model_ctree[["results"]][["ROC"]])
+```
+
+The ctree model returned an AUC of .75 with a sensitivity of .67 and specificity of .69. This model has the best quality thus far.  
+
+
+### RPART - Categorization and Regression Trees
+
+```{r}
+model_rpart <- train(
+  loan_status ~ ., 
+  training_set,
+  metric = "ROC",
+  method = "rpart",
+  preProcess = (c("zv", "center", "scale")),
+  tuneGrid = expand.grid(cp=0.0001),
+  trControl = myControl
+)
+model_rpart
+max(model_rpart[["results"]][["ROC"]])
+```
+
+The CART model returned an AUC of .78 with a sensitivity of .68 and specificity of .73. This model is of reasonably higher quality than the previous regression based models.   
+
+
+### RF - Random Forest
+
+```{r}
+rf.grid <- expand.grid(mtry = c(11:20))
+
+model_rf <- train( loan_status ~ .,
+  training_set,
+  method = "parRF",
+  preProcess = (c("zv", "center", "scale")),
+  tuneGrid = rf.grid,
+  metric = "ROC",
+  ntree = 100, 
+  trControl = myControl
+  )
+
+model_rf
+max(model_rf[["results"]][["ROC"]])
+```
+
+The random forest model produces a very highly quality prediction.  It is computationally expensive and takes a long time to process, however - this is clearly a reasonably high quality prediction.  The AUC comes back as .87 with a sensitivity of .76 and specificity of .79.  This score should be usable for our loan predictions. 
+
+### GBM model - Generalized Boosted Regression Model
+
+
+```{r}
+model_gbm <- train(loan_status ~ ., 
+                   training_set,
+                   method = "gbm",
+                   metric = "ROC",
+                   trControl = myControl,
+                   preProcess = c("zv", "center", "scale") 
+                   )
+
+model_gbm
+max(model_gbm[["results"]][["ROC"]])
+
+```
+
+The GBM model appears highly performant with an AUC of just under .82!. The sensitivity is .69 specificity is .78.
+
+# Model Evaluations
+
+Utilizing the resamples function in Caret, we can visizalize the performance of the various models against each other based on their ROC scores.  
+
+```{r echo=FALSE}
+model_list <- list(glm = model_glm, glmnet = model_glmnet, gbm = model_gbm, logit = model_logit, ctree = model_ctree, rpart = model_rpart, rf = model_rf)
+
+resamples <- resamples(model_list)
+summary(resamples)
+dotplot(resamples, metric = "ROC")
+```
+
+While the various logistic regression models performed reasonably well, they were beaten by the tree based models.  However, both of these methods were clearly less performant than the random forest and GBM models.  With ROC scores above .8 these models are clearly very predictive and would assist an investor in making loan decisions.  
+
+
+## Assesing the importance of specific variables
+
+As a lender chooses to make investment decisions, it is important to understand the sensitivity of specific varailes to these models.  Understanding which variables the models find important will allow us to make cleaner investment decisions based on criteria that an investor can clearly understand.  As both the random forest and GBM model performed very well, we will compare both of these models to see if they selected any different criteria. 
+
+```{r}
+#Checking variable importance for GBM
+varImp(object=model_gbm)
+plot(varImp(object=model_gbm), top = 10, main="GBM - Variable Importance")
+```
+
+The GBM model seemed to find quite a bit of importance in the borrower's credit activity over the recent past.  The most important variable it found were the number of credit inquirieis.  This signifies that a borrower may have been applying for more traditional loans elsewhere unsuccesfully before utilizing the LendingClub platform as a last resort.  The interest rate and term of the loan also seem to be very important predictors in the likelehood to default.  
+
+
+```{r}
+#Checking variable importance for RF
+varImp(object=model_rf)
+plot(varImp(object=model_rf),top = 10, main="RF - Variable Importance")
+```
+
+Many of the factors of the Random Forest model seem similar to the GBM model. The interest rate is a highly predictive variable as low quality borrowers may have a burdensome time repaying loans with high interest.  Similarly inquiries within the past 6 months are also important.  What is interesting is that the random forest model is also weighing the borrowers existing credit background with a medium level of importance.  Not only is it factoring in monthly installment payments, but it is also factoring their credit history, their level of credit utilization and debt to income ratios.  This shows that people who abuse their credit capacity, or who live constantly using credit seem to be more likely to default.  
+
+
+# Testing Predictions
+
+To complete our analysis we are going to test the accuracy of the models against our 20% out of sample data set.
+
+## GLM Predictions
+
+```{r}
+predictions_glm <- predict.train(object=model_glm,test_set,type="raw")
+confusionMatrix(predictions_glm,test_set$loan_status)
+
+roc_glm <- roc(test_set$loan_status, as.numeric(predictions_glm))
+print(roc_glm$auc)
+plot(roc_glm)
+
+```
+
+The GLM model performed slightly better than the RPart model and the GBM model.  The accuracy is .6392 and the AUC is .6352. The sensitivity is .63 and the specificity is .64. While the model is not highly accurate, it had a low false positive rate of 5.5%.
+
+
+## Rpart Predictions
+
+```{r}
+predictions_rpart <- predict.train(object=model_rpart,test_set,type="raw")
+confusionMatrix(predictions_rpart,test_set$loan_status)
+
+roc_rpart <- roc(test_set$loan_status, as.numeric(predictions_rpart))
+print(roc_rpart$auc)
+plot(roc_rpart)
+
+```
+
+The RPART model did not perform very well with an ROC of .574.  The accuracy was 65.5% with a sensitivity of .46 and a specificity of .68. This is not a high quality prediction. 
+
+
+## GBM Predictions
+
+```{r}
+predictions_gbm <- predict.train(object=model_gbm,test_set,type="raw")
+confusionMatrix(predictions_gbm,test_set$loan_status)
+
+roc_gbm <- roc(test_set$loan_status, as.numeric(predictions_gbm))
+print(roc_gbm$auc)
+plot(roc_gbm)
+
+```
+
+The GBM model performed well, with an accuracy of 73%.  The sensivity was .47 and the specificity was .77.  THe AUC for predicted values was .6277.  What is troubling is that the model still predcited that 664 loans would be repaid, but in fact defaulted.  This is a very high false positive rate of 8% which would result in a fairly substantial loss of principal.  By adjusting the cutoff value, it would be likely that we could imporive this false negative rate, as false positives would inclur lower losses for the investor.  
+
+
+## Random Forest Predictions
+
+```{r}
+predictions_rf <- predict.train(object=model_rf,test_set,type="raw")
+table(predictions_rf)
+confusionMatrix(predictions_rf,test_set$loan_status)
+
+roc_rf <- roc(test_set$loan_status, as.numeric(predictions_rf))
+print(roc_rf$auc)
+plot(roc_rf)
+
+```
+
+
+The Random Forest model performed reasonably well, with an accuracy of 68.36% and an ROC of .6062.  The sensitivity was .50 and the specificity was .71.  The accuracy was slightly lower than the GBM model predictions, and the AUC was much lower.  This is also still a very high false positive 0f 7.5% rate which would result in a fairly substantial loss of principal.  By adjusting the cutoff value, it would be likely that we could imporive this false negative rate, as false positives would incur lower losses for the investor.  
+
+# Model Selection
+
+While the Random Forest model appeared to have the AUC based on the training set, it appears that the model might have been overfit.  In the end, the best performing model was the standard GLM Mmodel. While the Random Forest and GBM models had higher accuracy on the test set, the GLM model had the highest AUC. 
+
+The other highly important factor was that the GLM model had the lowest rate of false positive's at 5.5%.  As an investor, this is the prediction that we would ideally want to minimize. If the model is too sensitive and indentifies too many borrowers as potential defaults, this is a better scenario than if it identifies them as safe investments and fails.  As an investor, it is better to miss out on opportunities than to make mistakes and have a complete loss of invested capital. As lending club has substantial loan volume, there are plenty of opportunities to make safer investments.  
+
+
+# Conclusions
+
+The analysis of the Lending Club data set proves that there are clear patterns in the provided data sets:  
+
+* Individuals with high debt burdens are more likely to default. 
+* Borrowers with substantial credit history activity in the past 6 months seem to be much more likely to default.
+* Lending Club appears to be the loan source of last result for lower quality borrowers.  
+* Low quality borrowers prefer longer 60 month term loans.
+
+However, using machine learning - investors can predict the likelehood of with a very high accuracy of nearly 75%.  This is much better than an investor could do by merely guessing or flipping a coin.  It would suit an investor to use these models before making any investments. 
+
+In future iterations of this project, we can put together an API that automates the investment process to auto-invest in less risky loans.  This will likely create a balanced porfolio with lower levels of risk than the average investor. 
+
